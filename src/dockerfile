@@ -1,0 +1,65 @@
+#genAI dockerfile
+
+# Use NVIDIA CUDA 12.1 base image on Ubuntu 22.04 to support PyTorch and GPU workloads
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
+
+# Set non-interactive timezone to prevent apt-get from hanging on geographic prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV TZ=Etc/UTC
+
+# Install core system dependencies, Python 3.10, and pre-built CPU COLMAP
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3.10-dev \
+    python3-pip \
+    python3-opencv \
+    git \
+    wget \
+    colmap \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Map 'python' to python3.10
+RUN ln -sf /usr/bin/python3.10 /usr/bin/python && \
+    python -m pip install --upgrade pip
+
+# ==============================================================================
+# OPTIONAL: Compile COLMAP with CUDA Support
+# The apt-get colmap package is CPU-only. For GPU-accelerated Multi-View Stereo 
+# (MVS), comment out 'colmap' in the apt-get step above and uncomment this block:
+#
+# RUN apt-get update && apt-get install -y cmake build-essential libboost-program-options-dev \
+#     libboost-filesystem-dev libboost-graph-dev libboost-system-dev libboost-test-dev \
+#     libceres-dev libfreeimage-dev libgoogle-glog-dev libgflags-dev libsuitesparse-dev
+# RUN git clone --branch 3.9 https://github.com/colmap/colmap.git /tmp/colmap && \
+#     cd /tmp/colmap && mkdir build && cd build && \
+#     cmake .. -DCMAKE_CUDA_ARCHITECTURES="all-major" -DCUDA_ENABLED=ON && \
+#     make -j$(nproc) && make install && rm -rf /tmp/colmap
+# ==============================================================================
+
+# Install PyTorch mapped to CUDA 12.1
+RUN pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+
+# Install 3D and visualization libraries
+RUN pip install open3d rerun-sdk
+
+# Install VLM dependencies (Qwen2-VL specific packages) and Depth Anything V2 requirements
+RUN pip install \
+    transformers \
+    accelerate \
+    "qwen-vl-utils[decord]" \
+    huggingface_hub \
+    opencv-python \
+    scipy 
+
+# Install FlashAttention for faster VLM inference (compilation takes a few minutes)
+RUN pip install flash-attn --no-build-isolation
+
+# Set working directory
+WORKDIR /app
+
+# Clone Depth Anything V2 to have its scripts readily accessible
+RUN git clone https://github.com/DepthAnything/Depth-Anything-V2.git /app/Depth-Anything-V2
+
+CMD ["/bin/bash"]
