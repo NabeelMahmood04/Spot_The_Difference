@@ -55,3 +55,54 @@ def project(points : torch.tensor, frames : FrameSet):
     uv = pix[..., :2] / z.clamp(min=1e-6)[..., None]
     return uv, z
 
+#Depth agreement threshold; monocular depth error grows with range.
+def depth_tolerance(z: torch.Tensor, tau_abs: float, tau_rel: float) -> torch.Tensor:
+    return tau_abs + tau_rel * z
+
+"""For each world point, count across `frames` how often it is
+
+    * consistent - observed depth agrees with the point's depth (surface seen there)
+    * free       - observed depth is clearly *behind* the point: the camera saw
+                   through the point's location, so the space is empty
+    * occluded   - observed depth is clearly *in front* of the point (no evidence)
+
+    Depth is compared against 3x3 min/max-pooled depth maps so that pixels on
+    depth discontinuities only vote "free" when the whole neighbourhood agrees.
+    `exclude` ([N] long) optionally names a frame index per point to skip (the
+    frame that generated the point).
+    Returns a dict of [N] int tensors: consistent, free, occluded, in_view.
+    """
+
+@torch.no_grad()
+def visibility_stats(points : torch.Tensor, frames : FrameSet, tau_abs: float = 0.05, tau_rel: float = 0.04, min_z : float = 0.15, exclude : torch.Tensor | None = None, chunk : int = 20000, border: int = 4):
+    depth = frames.depth
+    Fn, H, W = depth.shape
+
+    big = torch.where(depth > 0, depth, torch.full_like(depth, 1e6))
+    d_min = F.max_pool2d(-big[:, None], 3, 1, 1)[:, 0]
+    d_max = F.max_pool2d(depth[:, None], 3, 1, 1)[:, 0]
+    invalid = F.max_pool2d((depth <= 0)[:, None], 3, 1, 1)[:, 0]>0
+
+    out = {k : torch.zeros(len(points), dtype=torch.int32) for k in ("consistent", "free", "occluded", "in_view")}
+    fidx = torch.arange(Fn)[:, None]
+    for s in range(0, len(points), chunk):
+        p = points[s:s+chunk]
+        uv, z = project(p, frames)
+        u = uv[..., 0].floor().long()
+        v = uv[..., 1].floor().long()
+        inside = (z > min_z) & (u >= border) & (u < W - border) & (v >= border) & (v < H - border)
+        if exclude is not None:
+            inside &= fidx != exclude[s:s+chunk][None, :]
+        uc, vc = u.clamp(0, W - 1), v.clamp(0, H - 1)
+        lo = d_min[fidx, vc, uc]
+        hi = d_max[fidx, vc, uc]
+        inside &= ~invalid[fidx, vc, uc]
+        tau = depth_tolerance(z, tau_abs, tau_rel)
+        free = inside & (lo > z + tau)
+        occl = inside & (hi < z - tau)
+        cons = inside & ~free & ~occl
+        out["consistent"][s:s + chunk] = cons.sum(0).int()
+        out["free"][s:s + chunk] = free.sum(0).int()
+        out["occluded"][s:s + chunk] = occl.sum(0).int()
+        out["in_view"][s:s + chunk] = inside.sum(0).int()
+    return out
