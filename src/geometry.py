@@ -46,3 +46,12 @@ class FrameSet:
         R_new = self.R @ Rw.T
         t_new = self.t - (R_new @ tw)
         return FrameSet(self.names, self.K, R_new, t_new, self.depth)
+
+#Project world points [N,3] into every frame. Returns uv [F,N,2], z [F,N].
+def project(points : torch.tensor, frames : FrameSet):
+    cam = torch.einsum("fij,nj->fni", frames.R, points) + frames.t[:, None, :]
+    z = cam[..., 2]
+    pix = torch.einsum("fij,fnj->fni", frames.K, cam)
+    uv = pix[..., :2] / z.clamp(min=1e-6)[..., None]
+    return uv, z
+
