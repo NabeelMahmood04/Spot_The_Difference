@@ -115,3 +115,43 @@ def _panel(image_root, view, title, colour, height=420):
     cv2.putText(bar, title, (5, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1, cv2.LINE_AA)
     return np.vstack([bar, img])
 
+#Before/after keyframes of each changed location from both recordings.
+def evidence_images(changes, frames, image_root, Path, out_dir: Path):
+    out_dir.mkdir(parents=True, exist_ok = True)
+    paths = {}
+    for ch in changes:
+        panels=[]
+        if ch.kind == "removed":
+            c = ch.before
+            seen = (ch.views.get("A") or best_views(c.points, frames["A"], k=1) or [None])[0]
+            empty = (best_views(c.points, frames["B"], k=1, mode="free") or [None])[0]
+            panels = [_panel(image_root, seen, "recording 1: present", COLOURS["removed"]), _panel(image_root, empty, "recording 2: gone", COLOURS["removed"])]
+        elif ch.kind == "added":
+            c = ch.after
+            empty = (best_views(c.points, frames["A"], k=1, mode="free") or [None])[0]
+            seen = (ch.views.get("B") or best_views(c.points, frames["B"], k=1) or [None])[0]
+            panels = [_panel(image_root, empty, "recording 1: gone", COLOURS["added"]), _panel(image_root, seen, "recording 2: present", COLOURS["added"])]
+        else:
+            b, a = ch.before, ch.after
+            v1 = (ch.views.get("A") or best_views(b.points, frames["A"], k=1) or [None])[0]
+            v2 = (best_views(b.points, frames["B"], k=1, mode="free") or [None])[0]
+            v3 = (ch.views.get("B") or best_views(a.points, frames["B"], k=1) or [None])[0]
+            panels = [_panel(image_root, v1, "rec 1: old position", COLOURS["moved_before"]),
+                      _panel(image_root, v2, "rec 2: old position empty", COLOURS["moved_before"]),
+                      _panel(image_root, v3, "rec 2: new position", COLOURS["moved_after"])]
+
+        img = np.hstack(panels)
+        caption = np.full((60, img.shape[1], 3), 255, np.uint8)
+        words, line, y = ch.description.split(), "", 20
+        for w in words: #simple word wrap
+            if cv2.getTextSize(line + " " + w, cv2.FONT_HERSHEY_SIMPLEX, 0.42, 1)[0][0]>img.shape[1]-10:
+                cv2.putText(caption, line, (5,y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1, cv2.LINE_AA)
+                line, y = w, y + 18
+            else:
+                line = (line + " " + w).strip()
+        cv2.putText(caption, line, (5,y), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1, cv2.LINE_AA)
+        path = out_dir / f"change_{ch.id:02d}_{ch.kind}_{ch.label.replace(' ', '_')}.jpg"
+        cv2.imwrite(str(path), np.vstack([img, caption]))
+        paths[ch.id] = path
+    return paths
+
