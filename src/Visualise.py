@@ -101,3 +101,17 @@ def topdown(clouds, status, changes, landmarks, path : Path, res : float = 0.007
         x += 34 + cv2.getTextSize(name, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)[0][0]
     cv2.imwrite(str(path), np.vstack([strip, img]))
 
+def _panel(image_root, view, title, colour, height=420):
+    if view is None:
+        img = np.full((height, int(height * 0.56), 3), 235, np.uint8)
+        cv2.putText(img, "no view", (10, height // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (120, 120, 120), 2)
+    else:
+        name, (x0, y0, x1, y1) = view
+        img = cv2.imread(str(image_root / name))
+        cv2.rectangle(img, (x0, y0), (x1, y1), colour[::-1], 3)
+        img = cv2.resize(img, (int(img.shape[1] * height / img.shape[0]), height))
+        title = f"{title} ({name})"
+    bar = np.full((28, img.shape[1], 3), 255, np.uint8)
+    cv2.putText(bar, title, (5, 10), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 0, 0), 1, cv2.LINE_AA)
+    return np.vstack([bar, img])
+
