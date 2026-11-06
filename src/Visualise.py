@@ -155,3 +155,43 @@ def evidence_images(changes, frames, image_root, Path, out_dir: Path):
         paths[ch.id] = path
     return paths
 
+def export_ply(changes, path : Path):
+    pts, cols = [], []
+    for ch in changes:
+        for i, c in enumerate(ch.clusters):
+            pts.append(c.points)
+            cols.append(np.tile(np.array(_cluster_colour(ch, i)/255, (len(c.points), 1))))
+    pcd = o3d.geometry.PointCloud()
+    if pts:
+        pcd.points = o3d.utility.Vector3dVector(np.concatenate(pts))
+        pcd.colors = o3d.utility.Vector3dVector(np.concatenate(cols))
+    o3d.io.write_point_cloud(str(path), pcd)
+
+def write_report(changes, landmarks, evidence, out_dir: Path, stats: dict):
+    data = {"stats": stats,
+            "landmarks": [{"label": l["label"], "position": np.round(l["position"], 3).tolist(),
+                           "support": l["support"]} for l in landmarks],
+            "changes": [ch.summary() for ch in changes]}
+    (out_dir / "changes.json").write_text(json.dumps(data, indent=2))
+    lines = ["# Scene change report", "",
+             f"Detected **{len(changes)}** change(s) between recording 1 and recording 2.", ""]
+    for ch in changes:
+        lines.append(f"## #{ch.id} - {ch.kind.upper()}: {ch.label}")
+        lines.append("")
+        lines.append(ch.description)
+        lines.append("")
+        alt = ", ".join(f"{k} {v:.0%}" for k, v in ch.label_scores.items())
+        if alt:
+            lines.append(f"- CLIP label scores: {alt}")
+        for name, c in (("before", ch.before), ("after", ch.after)):
+            if c is not None:
+                lines.append(f"- {name}: centre {np.round(c.centroid, 2).tolist()} m, size "
+                             f"{np.round(c.extent, 2).tolist()} m, free-space evidence {c.evidence:.0%}, "
+                             f"DINOv2 before/after similarity {c.appearance_sim:.2f}")
+        if ch.kind == "moved":
+            lines.append(f"- displacement {np.round(ch.displacement, 2).tolist()} m "
+                         f"({np.linalg.norm(ch.displacement):.2f} m), match score {ch.match_score}")
+        if ch.id in evidence:
+            lines.append(f"\n![change {ch.id}](evidence/{evidence[ch.id].name})")
+        lines.append("")
+    (out_dir / "report.md").write_text("\n".join(lines))
